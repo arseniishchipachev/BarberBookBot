@@ -1,60 +1,215 @@
-from .dto import BarberDTO, BookingDTO, ServiceDTO
+from sqlalchemy import select, func
+from datetime import date
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-class FakeBarberRepository:
-    def __init__(self):
-        self._barbers = [
-            BarberDTO(id = 1, name='Леха', description='Топовый мастер по фейдам', number='+78005684741', is_available=True),
-            BarberDTO(id=2, name='Игорь', description='Эксперт по оформлению бороды', number='+79004484732',is_available=True),
-            BarberDTO(id=1, name='Иван', description='Классические стрижки', number='+78807784789',is_available=False),
-        ]
-        self._bookings = []
+from database.models import Barber, Service, ServiceCategory, Appointment, User
+from .dto import BarberDTO, BookingDTO, ServiceDTO, UserDTO
+
+
+class BarberRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
 
     async def get_active_barbers(self) -> list[BarberDTO]:
-        return [b for b in self._barbers if b.is_available]
+        """Получить всех активных мастеров."""
+        query = select(Barber).where(Barber.is_available.is_(True))
+        result = await self.session.scalars(query)
+        barbers = result.all()
 
-    async def get_barber_by_id(self, barber_id: int) -> BarberDTO | None:
-        for b in self._barbers:
-            if b.id == barber_id:
-                return b
-
-    async def add_booking(self, booking: BookingDTO) -> bool:
-        self._bookings.append(booking)
-        print(f"[MOCK DB] Добавлена новая запись: {booking}")
-        return True
-
-barber_repo = FakeBarberRepository()
-
-class FakeServiceRepository:
-    def __init__(self):
-        self._services = [
-            ServiceDTO(id=1,category_services= 'haircut', service_name='Мужская стрижка', description='классика (ножницы + машинка), мытье головы, стайлинг.', price=1800),
-            ServiceDTO(id=2,category_services= 'haircut', service_name='Стрижка машинкой', description='простая стрижка под 1–2 насадки.', price=1000),
-            ServiceDTO(id=3,category_services= 'haircut', service_name='Стрижка удлиненных волос', description='для каре и длинных стрижек, требует больше времени.', price=2200),
-            ServiceDTO(id=4,category_services= 'haircut', service_name='Детская стрижка', description='обычно для парней до 12 лет.', price=1400),
-            ServiceDTO(id=5,category_services= 'haircut', service_name='Камуфляж седины', description='быстрое тонирование волос, не полноценное окрашивание.', price=1200),
-            ServiceDTO(id=6,category_services= 'beard', service_name='Моделирование бороды', description='создание формы, стрижка триммером и ножницами.', price=1200),
-            ServiceDTO(id=7,category_services= 'beard', service_name='Королевское бритье', description='распаривание горячим полотенцем и бритье опасной бритвой.', price=1600),
-            ServiceDTO(id=8,category_services= 'beard', service_name='Камуфляж бороды', description='выравнивание цвета бороды, скрытие проплешин или седины.', price=1000),
-            ServiceDTO(id=9, category_services='category_care_packages', service_name='Удаление волос воском', description='убираются лишние волосы в носу, ушах и на межбровье.', price=500),
-            ServiceDTO(id=10, category_services='category_care_packages', service_name='Черная маска / Пилинг', description='глубокое очищение пор лица.', price=800),
-            ServiceDTO(id=11, category_services='category_care_packages', service_name='Патчи под глаза', description='экспресс-уход во время стрижки для снятия усталости.', price=400),
-            ServiceDTO(id=12, category_services='category_care_packages', service_name='Комплекс «Стрижка + Борода»', description='самая популярная позиция в любом барбершопе, выгоднее, чем отдельно', price=2600),
-            ServiceDTO(id=13, category_services='category_care_packages', service_name='Комплекс «Отец + Сын', description='парная стрижка.', price=2800),
-            ServiceDTO(id=14, category_services='category_care_packages', service_name='Комплекс «Все включено»', description='стрижка, борода, уход за лицом и воск.', price=3500),
+        return [
+            BarberDTO(
+                id=b.id,
+                name=b.full_name,
+                description=b.description or "",
+                number=b.phone,
+                is_available=b.is_available,
+            )
+            for b in barbers
         ]
 
+    async def get_barber_by_id(self, barber_id: int) -> BarberDTO | None:
+        """Получить мастера по его ID."""
+        barber = await self.session.get(Barber, barber_id)
+        if not barber:
+            return None
+
+        return BarberDTO(
+            id=barber.id,
+            name=barber.full_name,
+            description=barber.description or "",
+            number=barber.phone,
+            is_available=barber.is_available,
+        )
+
+    async def add_booking(self, booking: BookingDTO) -> bool:
+        """Сохранить бронирование в таблицу appointments."""
+        new_appointment = Appointment(
+            user_id=booking.user_id,
+            barber_id=booking.barber_id,
+            service_id=booking.service_id,
+            appointment_date=booking.date_time,
+            status="confirmed",
+        )
+        self.session.add(new_appointment)
+        await self.session.flush()
+        return True
+
+    async def get_user_bookings(self, user_id: int):
+        """Возвращает список активных записей пользователя вместе с инфой о мастере и услуге."""
+        stmt = (
+            select(Appointment, Barber, Service)
+            .join(Barber, Appointment.barber_id == Barber.id)
+            .join(Service, Appointment.service_id == Service.id)
+            .where(Appointment.user_id == user_id)
+            .order_by(Appointment.appointment_date.desc())
+        )
+        result = await self.session.execute(stmt)
+        return result.all()
+
+    async def get_booking_slots(self, barber_id: int, target_date: date) -> list[str]:
+        """Возвращает список занятых часов (например, ['11:00', '15:00']) на выбранный день."""
+        stmt = (
+            select(Appointment.appointment_date).where(
+                Appointment.barber_id == barber_id,
+                func.date(Appointment.appointment_date) == target_date
+            )
+        )
+
+        result = await self.session.execute(stmt)
+        booked_datetimes = result.scalars().all()
+        return [dt.strftime("%H:%M") for dt in booked_datetimes]
+
+    async def delete_booking(self, booking_id: int, user_id: int) -> bool:
+        """Удаляет запись пользователя по ID."""
+        stmt = select(Appointment).where(
+            Appointment.id == booking_id,
+            Appointment.user_id == user_id
+        )
+        result = await self.session.execute(stmt)
+        booking = result.scalar_one_or_none()
+
+        if booking:
+            await self.session.delete(booking)
+            await self.session.flush()
+            return True
+        return False
+
+class ServiceRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
     async def get_all_services(self) -> list[ServiceDTO]:
-        return self._services
+        """Получить все услуги с жадной загрузкой их категорий."""
+        query = select(Service).options(selectinload(Service.category))
+        result = await self.session.scalars(query)
+        services = result.all()
+
+        return [
+            ServiceDTO(
+                id=s.id,
+                category_services=s.category.name_category,
+                service_name=s.service_name,
+                description=s.description or "",
+                price=s.price,
+            )
+            for s in services
+        ]
 
     async def get_service_by_id(self, service_id: int) -> ServiceDTO | None:
-        for s in self._services:
-            if s.id == service_id:
-                return s
-        return None
+        """Получить услугу по её ID."""
+        query = (
+            select(Service)
+            .where(Service.id == service_id)
+            .options(selectinload(Service.category))
+        )
+        service = await self.session.scalar(query)
+        if not service:
+            return None
+
+        return ServiceDTO(
+            id=service.id,
+            category_services=service.category.name_category,
+            service_name=service.service_name,
+            description=service.description or "",
+            price=service.price,
+        )
 
     async def get_services_by_category(self, category_code: str) -> list[ServiceDTO]:
-        return [s for s in self._services if s.category_services == category_code]
+        """Получить услуги конкретной категории (haircut, beard и т.д.)."""
+        query = (
+            select(Service)
+            .join(Service.category)
+            .where(ServiceCategory.name_category == category_code)
+            .options(selectinload(Service.category))
+        )
+        result = await self.session.scalars(query)
+        services = result.all()
 
-service_repo = FakeServiceRepository()
+        return [
+            ServiceDTO(
+                id=s.id,
+                category_services=category_code,
+                service_name=s.service_name,
+                description=s.description or "",
+                price=s.price,
+            )
+            for s in services
+        ]
 
+class UserRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
 
+    async def get_by_id(self, tg_id: int) -> UserDTO | None:
+        """Поиск пользователя по Telegram ID."""
+        user = await self.session.get(User, tg_id)
+        if not user:
+            return None
+        return UserDTO(
+            id=user.id,
+            full_name=user.full_name,
+            phone=user.phone,
+            created_at=user.created_at,
+        )
+
+    async def get_or_create(
+            self, tg_id: int, full_name: str, phone: str | None = None
+    ) -> UserDTO:
+        """
+        Получает пользователя из БД. Если его нет — регистрирует.
+        Если имя изменилось в Telegram — обновляет его.
+        """
+        user = await self.session.get(User, tg_id)
+
+        if not user:
+            user = User(
+                id=tg_id,
+                full_name=full_name,
+                phone=phone,
+            )
+            self.session.add(user)
+            await self.session.flush()
+        else:
+            # Актуализируем имя, если юзер сменил его в профиле Telegram
+            if user.full_name != full_name:
+                user.full_name = full_name
+            if phone and not user.phone:
+                user.phone = phone
+            await self.session.flush()
+
+        return UserDTO(
+            id=user.id,
+            full_name=user.full_name,
+            phone=user.phone,
+            created_at=user.created_at,
+        )
+
+    async def update_phone(self, tg_id: int, phone: str) -> bool:
+        """Обновляет номер телефона пользователя."""
+        user = await self.session.get(User, tg_id)
+        if not user:
+            return False
+        user.phone = phone
+        await self.session.flush()
+        return True
