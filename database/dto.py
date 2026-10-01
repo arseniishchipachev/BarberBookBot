@@ -28,3 +28,6 @@ class BookingDTO:
 @dataclass
 class UserDTO:
     id: int
+    full_name: str
+    phone: str | None = None
+    created_at: datetime | None = None

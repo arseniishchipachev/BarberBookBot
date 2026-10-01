@@ -1,0 +1,18 @@
+# Виртуальное окружение
+.venv/
+venv/
+
+# Кеш Python
+__pycache__/
+*.py[cod]
+
+# Настройки PyCharm
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Секреты и логи
+.env
+*.log

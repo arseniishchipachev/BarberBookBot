@@ -4,7 +4,8 @@ class BookingState(StatesGroup):
     choosing_category = State()
     choosing_service = State()
     choosing_barber = State()
-    # choosing_date = State()
+    choosing_date = State()
+    choosing_time = State()
     confirm_booking = State()
 
 class AdminState(StatesGroup):

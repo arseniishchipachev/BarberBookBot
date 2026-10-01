@@ -10,7 +10,15 @@ def get_admin_ids() -> list[int]:
 
 @dataclass
 class DbConfig:
-    path: str = "database/barber_book.db"
+    user: str = field(default_factory=lambda: os.getenv("POSTGRES_USER", "Barber_admin"))
+    password:  str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", "secret_password"))
+    database: str = field(default_factory=lambda: os.getenv("POSTGRES_DB", "barbershop_db"))
+    host: str = field(default_factory=lambda: os.getenv("POSTGRES_HOST", "localhost"))
+    port: int = field(default_factory=lambda: int(os.getenv("POSTGRES_PORT", "5432")))
+
+    @property
+    def database_url(self) -> str:
+        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
 
 @dataclass
 class TgBot:
